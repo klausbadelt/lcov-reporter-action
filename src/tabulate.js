@@ -30,7 +30,9 @@ export function tabulate(lcov, options) {
 			],
 			[],
 		)
-
+	if (rows.length === 0) {
+		return ""
+	}
 	return table(tbody(head, ...rows))
 }
 
@@ -117,8 +119,14 @@ function uncovered(file, options) {
 
 	const all = ranges([...branches, ...lines])
 
-	return all
-		.map(function (range) {
+	var numNotIncluded = 0
+	if (options.maxUncoveredLines) {
+		const notIncluded = all.splice(options.maxUncoveredLines)
+		numNotIncluded = notIncluded.length
+	}
+
+	const result = all
+		.map(function(range) {
 			const fragment =
 				range.start === range.end
 					? `L${range.start}`
@@ -132,6 +140,12 @@ function uncovered(file, options) {
 			return a({ href: `${href}#${fragment}` }, text)
 		})
 		.join(", ")
+
+	if (numNotIncluded > 0) {
+		return result + ` and ${numNotIncluded} more...`
+	} else {
+		return result
+	}
 }
 
 function ranges(linenos) {

@@ -22834,7 +22834,9 @@ function tabulate(lcov, options) {
 			],
 			[],
 		);
-
+	if (rows.length === 0) {
+		return ""
+	}
 	return table(tbody(head, ...rows))
 }
 
@@ -22921,8 +22923,14 @@ function uncovered(file, options) {
 
 	const all = ranges([...branches, ...lines]);
 
-	return all
-		.map(function (range) {
+	var numNotIncluded = 0;
+	if (options.maxUncoveredLines) {
+		const notIncluded = all.splice(options.maxUncoveredLines);
+		numNotIncluded = notIncluded.length;
+	}
+
+	const result = all
+		.map(function(range) {
 			const fragment =
 				range.start === range.end
 					? `L${range.start}`
@@ -22935,7 +22943,13 @@ function uncovered(file, options) {
 
 			return a({ href: `${href}#${fragment}` }, text)
 		})
-		.join(", ")
+		.join(", ");
+
+	if (numNotIncluded > 0) {
+		return result + ` and ${numNotIncluded} more...`
+	} else {
+		return result
+	}
 }
 
 function ranges(linenos) {
@@ -22966,6 +22980,10 @@ function ranges(linenos) {
 }
 
 function comment(lcov, options) {
+	const reportTable = tabulate(lcov, options);
+	if (options.dontPostIfNoChangedFilesInReport && !reportTable) {
+		return
+	}
 	return fragment(
 		options.title ? h2(options.title) : "",
 		options.base
@@ -22975,14 +22993,16 @@ function comment(lcov, options) {
 			: `Coverage for this commit`,
 		table(tbody(tr(th(percentage(lcov).toFixed(2), "%")))),
 		"\n\n",
-		details(
-			summary(
-				options.shouldFilterChangedFiles
-					? "Coverage Report for Changed Files"
-					: "Coverage Report",
-			),
-			tabulate(lcov, options),
-		),
+		reportTable
+			? details(
+					summary(
+						options.shouldFilterChangedFiles
+							? "Coverage Report for Changed Files"
+							: "Coverage Report",
+					),
+					reportTable,
+			  )
+			: "",
 	)
 }
 
@@ -22997,6 +23017,16 @@ function diff(lcov, before, options) {
 	const plus = pdiff > 0 ? "+" : "";
 	const arrow = pdiff === 0 ? "" : pdiff < 0 ? "▾" : "▴";
 
+	const thresholdWarning =
+		options.failDropThreshold && pdiff < -options.failDropThreshold
+			? `Failing due to coverage dropping more than ${options.failDropThreshold}%!`
+			: "";
+
+	const reportTable = tabulate(lcov, options);
+	if (options.dontPostIfNoChangedFilesInReport && !reportTable) {
+		return
+	}
+
 	return fragment(
 		options.title ? h2(options.title) : "",
 		options.base
@@ -23006,21 +23036,25 @@ function diff(lcov, before, options) {
 			: `Coverage for this commit`,
 		table(
 			tbody(
+				tr(th("Coverage"), th("Diff")),
 				tr(
-					th(pafter.toFixed(2), "%"),
-					th(arrow, " ", plus, pdiff.toFixed(2), "%"),
+					td(pafter.toFixed(2), "%"),
+					td(arrow, " ", plus, pdiff.toFixed(2), "%"),
 				),
 			),
 		),
+		thresholdWarning ? b(thresholdWarning) : "",
 		"\n\n",
-		details(
-			summary(
-				options.shouldFilterChangedFiles
-					? "Coverage Report for Changed Files"
-					: "Coverage Report",
-			),
-			tabulate(lcov, options),
-		),
+		reportTable
+			? details(
+					summary(
+						options.shouldFilterChangedFiles
+							? "Coverage Report for Changed Files"
+							: "Coverage Report",
+					),
+					reportTable,
+			  )
+			: "",
 	)
 }
 
@@ -23106,7 +23140,25 @@ async function main$1() {
 		core$1.getInput("filter-changed-files").toLowerCase() === "true";
 	const shouldDeleteOldComments =
 		core$1.getInput("delete-old-comments").toLowerCase() === "true";
+	const dontPostIfNoChangedFilesInReport =
+		core$1.getInput("dont-post-if-no-changed-files-in-report").toLowerCase() ===
+		"true";
 	const title = core$1.getInput("title");
+	const maxUncoveredLines = core$1.getInput("max-uncovered-lines");
+	const failDropThreshold = core$1.getInput("fail-drop-percent-threshold");
+
+	if (maxUncoveredLines && isNaN(parseInt(maxUncoveredLines))) {
+		console.log(
+			`Invalid parameter for max-uncovered-lines '${maxUncoveredLines}'. Must be an integer. Exiting...`,
+		);
+		return
+	}
+	if (failDropThreshold && isNaN(parseFloat(failDropThreshold))) {
+		console.log(
+			`Invalid parameter for fail-drop-threshold '${failDropThreshold}'. Must be a number. Exiting...`,
+		);
+		return
+	}
 
 	const raw = await fs.promises.readFile(lcovFile, "utf-8").catch(err => null);
 	if (!raw) {
@@ -23138,15 +23190,26 @@ async function main$1() {
 	}
 
 	options.shouldFilterChangedFiles = shouldFilterChangedFiles;
+	options.dontPostIfNoChangedFilesInReport = dontPostIfNoChangedFilesInReport;
 	options.title = title;
+	options.failDropThreshold = failDropThreshold;
+	if (maxUncoveredLines) {
+		options.maxUncoveredLines = parseInt(maxUncoveredLines);
+	}
 
-	if (shouldFilterChangedFiles) {
+	if (shouldFilterChangedFiles || dontPostIfNoChangedFilesInReport) {
 		options.changedFiles = await getChangedFiles(githubClient, options, github_1);
 	}
 
 	const lcov = await parse$2(raw);
 	const baselcov = baseRaw && (await parse$2(baseRaw));
-	const body = diff(lcov, baselcov, options).substring(0, MAX_COMMENT_CHARS);
+	let body = diff(lcov, baselcov, options);
+	if (!body) {
+		console.log(`No changed files in report, exiting...`);
+		return
+	} else {
+		body = body.substring(0, MAX_COMMENT_CHARS);
+	}
 
 	if (github_1.eventName === "pull_request") {
 		if (shouldDeleteOldComments) {
@@ -23165,6 +23228,23 @@ async function main$1() {
 			commit_sha: options.commit,
 			body: body,
 		});
+	}
+
+	if (failDropThreshold) {
+		if (!baselcov) {
+			console.warn(
+				"Cannot check coverage drop threshold with no base coverage file. Skipping this step.",
+			);
+		} else {
+			const pbefore = percentage(baselcov);
+			const pafter = percentage(lcov);
+			const pdiff = pafter - pbefore;
+			if (pdiff < -failDropThreshold) {
+				core$1.setFailed(
+					`Coverage dropped more than ${failDropThreshold}%. Failing coverage check.`,
+				);
+			}
+		}
 	}
 }
 
