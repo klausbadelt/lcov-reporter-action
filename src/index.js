@@ -1,6 +1,6 @@
 import { promises as fs } from "fs"
 import core from "@actions/core"
-import { GitHub, context } from "@actions/github"
+import { getOctokit, context } from "@actions/github"
 import path from "path"
 
 import { parse } from "./lcov"
@@ -14,7 +14,7 @@ const MAX_COMMENT_CHARS = 65536
 
 async function main() {
 	const token = core.getInput("github-token")
-	const githubClient = new GitHub(token)
+	const githubClient = getOctokit(token).rest
 	const workingDir = core.getInput('working-directory') || './';
 	const lcovFile = path.join(workingDir, core.getInput("lcov-file") || "./coverage/lcov.info")
 	const baseFile = core.getInput("lcov-base")
