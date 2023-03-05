@@ -24,7 +24,7 @@ inputs:
     required: false
     default: false
   working-directory:
-    description: Set working directory if project is not in root folder  
+    description: Set working directory if project is not in root folder
     required: false
     default: "./"
   title:
@@ -42,4 +42,4 @@ inputs:
     required: false
 runs:
   using: node16
-  main: dist/main.js
+  main: dist/main.cjs
